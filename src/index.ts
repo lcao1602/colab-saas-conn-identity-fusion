@@ -24,6 +24,7 @@ import { ContextHelper } from './contextHelper'
 import { PROCESSINGWAIT } from './constants'
 import { UniqueAccount } from './model/account'
 import { Config } from './model/config'
+import { AsyncSemaphore } from './utils/AsyncSemaphore'
 
 // Connector must be exported as module property named connector
 export const connector = async () => {
@@ -316,17 +317,35 @@ export const connector = async () => {
 
             //BUILD RESULTING ACCOUNTS
             logger.info('Sending accounts.')
+            const accountStream = ctx.listUniqueAccountsStream()
+            const logBatchSize = 100
+            let processedAccounts = 0
+            const totalAccounts = await ctx.getTotalAccountsCount()
 
-            const promises = ctx.listUniqueAccounts()
-            for (const promise of promises) {
-                promise.then((account) => {
-                    logger.debug({ account })
+            const semaphore = config.maxConcurrency ? new AsyncSemaphore(config.maxConcurrency) : undefined
+            if (!!semaphore) {
+                for await (const account of accountStream) {
+                    processedAccounts++
+                    if (processedAccounts % logBatchSize === 0) {
+                        // console.timeEnd(`${processedAccounts}`)
+                        console.log(`Processed ${processedAccounts} out of ${totalAccounts} accounts`)
+                        // console.time(`${processedAccounts + logBatchSize}`)
+                    }
+                    await semaphore.withLockRunAndForget(async () => {
+                        // logger.debug({ account })
+                        res.send(account)
+                        // console.timeLog('stdAccountList', `${++n} ${account.attributes.uniqueID}`)
+                    })
+                }
+                // Wait for any remaining promises to complete
+                await semaphore.awaitTerminate()
+            } else {
+                for await (const account of accountStream) {
+                    // logger.debug({ account })
                     res.send(account)
-                    console.timeLog('stdAccountList', `${++n} ${account.attributes.uniqueID}`)
-                })
+                    // console.timeLog('stdAccountList', `${++n} ${account.attributes.uniqueID}`)
+                }
             }
-
-            await Promise.all(promises)
         } finally {
             clearInterval(interval)
         }

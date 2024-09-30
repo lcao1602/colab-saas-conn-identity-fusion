@@ -63,7 +63,6 @@ export class ContextHelper {
     private source?: Source
     private schema?: AccountSchema
     private ids: Set<string>
-    private identities: IdentityDocument[]
     private identitiesById: Map<string, IdentityDocument>
     // private currentIdentities: IdentityDocument[]
     private accounts: Account[]
@@ -78,7 +77,7 @@ export class ContextHelper {
     private baseUrl: string
     private initiated: string | undefined
     private mergingEnabled: boolean = false
-    private candidatesStringAttributes: string[] = []
+    private candidatesStringAttributes: Map<string, string> = new Map<string, string>()
     /** LID */
     private lidSource?: Source
     currentMaxLid: number
@@ -94,7 +93,6 @@ export class ContextHelper {
         this.sources = []
         this.ids = new Set()
         this.uuids = new Set()
-        this.identities = []
         this.identitiesById = new Map<string, IdentityDocument>()
         // this.currentIdentities = []
         this.accounts = []
@@ -135,7 +133,6 @@ export class ContextHelper {
     }
 
     releaseIdentityData() {
-        this.identities = []
         this.identitiesById = new Map()
         // this.currentIdentities = []
     }
@@ -170,6 +167,35 @@ export class ContextHelper {
         this.source = allSources.find((x) => (x.connectorAttributes as any).spConnectorInstanceId === id)
         this.sources = allSources.filter((x) => this.config!.sources.includes(x.name))
 
+        // fetch LID historical accounts
+        logger.info(lm(`Fetching LID historical accounts`, this.c))
+        this.lidSource = allSources.find((source) => source.name === this.config?.lid_source)
+        if (!this.lidSource) throw new Error('Unable to init lid sources')
+        // build and cache the LID schema
+        await this.buildDynamicSchema([this.lidSource])
+        ;(await this.client.listAccounts([this.lidSource.id!])).forEach((cur: Account) => {
+            this.historicalLidAccounts.set(
+                cur.attributes![this.config.lid_searchField],
+                cur.attributes![this.config.lid_field]
+            )
+        })
+        this.currentMaxLid = Math.max(
+            ...Array.from(this.historicalLidAccounts.values(), (x) => Number(x)),
+            this.config?.lid_start ?? 0
+        )
+
+        logger.info(lm(`Fetching UVID historical accounts`, this.c))
+        this.uvidSource = allSources.find((source) => source.name === this.config?.uvid_source)
+        if (!this.uvidSource) throw new Error('Unable to init uvid sources')
+        // build and cache the UVID schema
+        await this.buildDynamicSchema([this.uvidSource])
+        ;(await this.client.listAccounts([this.uvidSource.id!])).forEach((cur: Account) => {
+            this.historicalUvidAccounts.set(cur.nativeIdentity, cur.attributes![this.config.uvid_field])
+        })
+        if (!this.source) {
+            throw new ConnectorError('No connector source was found on the tenant.')
+        }
+
         if (!this.source) {
             throw new ConnectorError('No connector source was found on the tenant.')
         }
@@ -178,7 +204,6 @@ export class ContextHelper {
         const wfName = `${WORKFLOW_NAME} (${this.config!.cloudDisplayName})`
         this.emailer = await this.getEmailWorkflow(wfName, owner)
 
-        this.identities = []
         this.identitiesById = new Map()
         this.accounts = []
         this.authoritativeAccounts = []
@@ -275,9 +300,7 @@ export class ContextHelper {
         ])
         this.config.merging_map.map((x) => `attributes.${x.identity}`).forEach((x) => attributes.add(x))
         this.config.merging_attributes.map((x) => `attributes.${x}`).forEach((x) => attributes.add(x))
-
-        this.identities = await this.client.listIdentities([...attributes])
-        this.identities.forEach((x) => {
+        ;(await this.client.listIdentities([...attributes])).forEach((x) => {
             this.identitiesById.set(x.id, x)
             if (this.config.uid_scope === 'platform') this.ids.add(x.attributes!.uid)
         })
@@ -289,19 +312,18 @@ export class ContextHelper {
             identity = this.identitiesById.get(id)
         } else {
             identity = await this.client.getIdentityBySearch(id)
-            this.identitiesById.set(id, identity!)
-            this.identities.push(identity!)
+            if (!!identity) this.identitiesById.set(id, identity!)
         }
 
         return identity
     }
 
     async getIdentityByUID(uid: string): Promise<IdentityDocument | undefined> {
-        if (this.identities.length > 0) {
-            return this.identities.find((x) => x.attributes!.uid === uid)
+        if (this.identitiesById.keys.length > 0) {
+            return [...this.identitiesById.values()].find((x) => x.attributes!.uid === uid)
         } else {
             const identity = await this.client.getIdentityByUID(uid)
-            this.identities.push(identity!)
+            if (!!identity) this.identitiesById.set(identity.id, identity!)
             return identity
         }
     }
@@ -332,6 +354,13 @@ export class ContextHelper {
                 this.accounts.push(account)
             }
         }
+    }
+
+    async getTotalAccountsCount(): Promise<number> {
+        const c = 'getTotalAccountCount'
+        logger.info(lm('Fetching total account count.', c))
+        return this.accounts.length
+        // return await this.client.totalAccountsCount(this.sources.map((x) => x.id!))
     }
 
     listProcessedAccountIDs(): string[] {
@@ -398,6 +427,19 @@ export class ContextHelper {
         return promises
     }
 
+    async *listUniqueAccountsStream(): AsyncGenerator<UniqueAccount> {
+        const c = 'listUniqueAccounts'
+        logger.debug(lm('Updating accounts.', c))
+
+        while (this.accounts.length > 0) {
+            const account = this.accounts.pop()!
+            const uniqueAccount = await this.refreshUniqueAccount(account)
+            if (uniqueAccount) {
+                yield uniqueAccount
+            }
+        }
+    }
+
     private async getAccountIdentity(account: Account): Promise<IdentityDocument | undefined> {
         let identity: IdentityDocument | undefined
         if (this.initiated === 'full') {
@@ -458,7 +500,6 @@ export class ContextHelper {
 
     async refreshUniqueAccount(account: Account): Promise<UniqueAccount> {
         const c = 'refreshUniqueAccount'
-
         const sourceAccounts = await this.listSourceAccounts(account)
         let needsRefresh = false
         // let sourceAccountsChanged = false
@@ -477,13 +518,7 @@ export class ContextHelper {
                 accountIds = accounts.filter((x) => this.config.sources.includes(x.source!.name!)).map((x) => x.id!)
                 const accountIdsStr = accountIds.sort().toString()
 
-                if (
-                    accountIdsStr.indexOf(originalAccountIdsStr) === -1 ||
-                    originalAccountIdsStr.indexOf(accountIdsStr) === -1
-                    // !originalAccountIds.every((item) => accountIds.includes(item)) ||
-                    // !accountIds.every((item) => originalAccountIds.includes(item))
-                ) {
-                    // sourceAccountsChanged = true
+                if (accountIdsStr !== originalAccountIdsStr) {
                     needsRefresh = true
                     const isEdited = account.attributes!.statuses.includes('edited')
                     if (isEdited) {
@@ -921,23 +956,20 @@ export class ContextHelper {
     }
 
     buildCandidatesAttributes() {
-        const candidatesAttributes = this.identities.map((x) =>
-            buildIdentityAttributesObject(x, this.config.merging_map)
-        )
-        this.candidatesStringAttributes = candidatesAttributes.map((x) => JSON.stringify(x))
+        for (const [id, identity] of this.identitiesById.entries()) {
+            const accountStringAttributes = JSON.stringify(
+                buildIdentityAttributesObject(identity, this.config.merging_map)
+            )
+            this.candidatesStringAttributes.set(accountStringAttributes, id)
+        }
     }
 
     private findIdenticalMatch(account: Account): IdentityDocument | undefined {
-        let match: IdentityDocument | undefined
         const accountAttributes = buildAccountAttributesObject(account, this.config.merging_map, true)
         const accountStringAttributes = JSON.stringify(accountAttributes)
 
-        const firstIndex = this.candidatesStringAttributes.indexOf(accountStringAttributes)
-        if (firstIndex > -1) {
-            match = this.identities[firstIndex]
-        }
-
-        return match
+        const identityId = this.candidatesStringAttributes.get(accountStringAttributes)
+        if (!!identityId) return this.identitiesById.get(identityId)
     }
 
     private findSimilarMatches(account: Account): { identity: IdentityDocument; score: Map<string, string> }[] {
@@ -945,7 +977,7 @@ export class ContextHelper {
         const accountAttributes = buildAccountAttributesObject(account, this.config.merging_map, true)
         const length = Object.keys(accountAttributes).length
 
-        candidates: for (const candidate of this.identities) {
+        candidates: for (const candidate of this.identitiesById.values()) {
             // const scores: number[] = []
             const scores = new Map<string, number>()
             attributes: for (const attribute of Object.keys(accountAttributes)) {
@@ -1435,6 +1467,7 @@ export class ContextHelper {
             identityAttribute: 'uuid',
         }
 
+        this.schemaCache.set(key, schema)
         return schema
     }
 

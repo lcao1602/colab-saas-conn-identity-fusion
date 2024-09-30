@@ -46,6 +46,9 @@ import {
     UsageType,
     SourcesBetaApi,
     TaskManagementBetaApi,
+    AccountsApiCreateAccountRequest,
+    AccountsAsyncResult,
+    Source,
 } from 'sailpoint-api-client'
 import { URL } from 'url'
 import { logger } from '@sailpoint/connector-sdk'
@@ -555,5 +558,19 @@ export class SDKClient {
         const response = await api.createProvisioningPolicy(requestParameters)
 
         return response.data
+    }
+
+    createAccount = async (accountToCreate: Account, source: Source): Promise<AccountsAsyncResult | undefined> => {
+        const api = new AccountsApi(this.config)
+        const requestParameters: AccountsApiCreateAccountRequest = {
+            accountAttributesCreate: { attributes: { ...accountToCreate.attributes, sourceId: source.id! } },
+        }
+
+        try {
+            const response = await api.createAccount(requestParameters)
+            return response.data
+        } catch (e) {
+            return undefined
+        }
     }
 }

@@ -71,6 +71,8 @@ export interface Config {
     uvid_template: string
     /* Source dependent dedup config */
     sourceDependentDedupeConfig?: SourceDependentDedupeConfig[]
+    /* Max concurrency */
+    maxConcurrency?: number
 }
 
 export interface SourceDependentDedupeConfig {

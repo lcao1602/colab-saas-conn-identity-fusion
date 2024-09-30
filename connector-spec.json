@@ -55,6 +55,12 @@
                     "sectionHelpMessage": "Add your base configuration details here",
                     "items": [
                         {
+                            "key": "maxConcurrency",
+                            "label": "The number of concurrent requests",
+                            "type": "number",
+                            "required": false
+                        },
+                        {
                             "key": "sources",
                             "label": "List of account sources to read from",
                             "type": "list",
