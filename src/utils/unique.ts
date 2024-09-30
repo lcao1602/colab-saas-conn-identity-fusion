@@ -3,37 +3,39 @@ import { Account } from 'sailpoint-api-client'
 import velocityjs from 'velocityjs'
 import { buildAccountAttributesObject, lm } from '.'
 import { transliterate } from 'transliteration'
-import { Config } from '../model/config'
+import { AccountMergingMap, Config, UIDConfig } from '../model/config'
 
-export const buildUniqueID = async (
+export const _buildUniqueID = async (
     account: Account,
-    currentIDs: Set<string>,
-    config: Config,
+    config: UIDConfig,
+    mergingMap: AccountMergingMap[],
+    currentIds: Set<string>,
     buildContext: boolean
 ): Promise<string> => {
-    const c = 'buildUniqueID'
+    const c = '_buildUniqueID'
 
-    let template = velocityjs.parse(config.uid_template)
-    if (!template.find((x) => x.id === 'counter')) {
-        template = velocityjs.parse(config.uid_template + '$counter')
+    let parsedTemplate = velocityjs.parse(config.template)
+    if (!parsedTemplate.find((x) => x.id === 'counter')) {
+        parsedTemplate = velocityjs.parse(config.template + '$counter')
     }
-    const velocity = new velocityjs.Compile(template)
+    const velocity = new velocityjs.Compile(parsedTemplate)
 
     let found = false
     let counter = 0
     let id = ''
+    let counterLen = 0
     while (!found) {
         logger.debug(lm('Building context', c, 2))
         let context
         if (buildContext) {
-            const attributes = buildAccountAttributesObject(account, config.merging_map)
+            const attributes = buildAccountAttributesObject(account, mergingMap)
             context = { ...account.attributes, ...attributes }
         } else {
             context = { ...account.attributes }
         }
-
         if (counter > 0) {
-            const c = '0'.repeat(Math.max(0, config.uid_digits - counter.toString().length)) + counter
+            const c = '0'.repeat(Math.max(0, config.minCounterDigits - counter.toString().length)) + counter
+            counterLen = c.length
             context.counter = c
         } else {
             context.counter = ''
@@ -45,16 +47,16 @@ export const buildUniqueID = async (
             throw new Error('No value returned by template')
         }
 
-        if (config.uid_normalize) {
+        if (config.normalize) {
             id = transliterate(id)
             id = id.replace(/'/g, '')
         }
 
-        if (config.uid_spaces) {
+        if (config.spaces) {
             id = id.replace(/\s/g, '')
         }
 
-        switch (config.uid_case) {
+        switch (config.case) {
             case 'lower':
                 id = id.toLowerCase()
                 break
@@ -65,7 +67,7 @@ export const buildUniqueID = async (
                 break
         }
 
-        if (currentIDs.has(id!)) {
+        if (currentIds.has(id!)) {
             counter++
             logger.debug(`Duplicate ID found for ${id}`)
         } else {
@@ -73,10 +75,35 @@ export const buildUniqueID = async (
         }
     }
 
+    if (config.maxLength && id.length - config.maxLength > 0) {
+        const numCharsToTruncate = id.length - config.maxLength
+        const firstCounterDigitIndex = id.length - counterLen
+        const truncatedIdWithoutCounter = id.substring(0, firstCounterDigitIndex - numCharsToTruncate)
+        id = `${truncatedIdWithoutCounter}${id.substring(firstCounterDigitIndex)}`
+    }
     logger.debug(lm(`Final ID: ${id}`, c, 2))
     return id
 }
 
+export const buildUniqueID = async (
+    account: Account,
+    currentIDs: Set<string>,
+    config: Config,
+    buildContext: boolean
+): Promise<string> => {
+    const c = 'buildUniqueID'
+    const uidConfig: UIDConfig = {
+        case: config.uid_case,
+        minCounterDigits: config.uid_digits,
+        normalize: config.uid_normalize,
+        spaces: config.uid_spaces,
+        template: config.uid_template,
+    }
+    const id = await _buildUniqueID(account, uidConfig, config.merging_map, currentIDs, buildContext)
+
+    logger.debug(lm(`Final ID: ${id}`, c, 2))
+    return id
+}
 // export const buildUniqueAccount = async (
 //     account: Account,
 //     status: string,

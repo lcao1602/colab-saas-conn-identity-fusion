@@ -11,7 +11,7 @@ import {
     Source,
     WorkflowBeta,
 } from 'sailpoint-api-client'
-import { Config } from './model/config'
+import { AccountMergingMap, Config } from './model/config'
 import { SDKClient } from './sdk-client'
 import {
     AccountSchema,
@@ -50,6 +50,8 @@ import { Status } from './model/status'
 import { Action, ActionSource } from './model/action'
 import { actions } from './data/action'
 import { lig3 } from './utils/lig'
+import { retrieveAndUpdateLidForAccount } from './utils/lid'
+import { retrieveAndUpdateUvidForAccount } from './utils/uvid'
 
 export class ContextHelper {
     private c: string = 'ContextHelper'
@@ -77,6 +79,15 @@ export class ContextHelper {
     private initiated: string | undefined
     private mergingEnabled: boolean = false
     private candidatesStringAttributes: string[] = []
+    /** LID */
+    private lidSource?: Source
+    currentMaxLid: number
+    historicalLidAccounts: Map<string, string>
+    /* UVID */
+    private schemaCache: Map<string, AccountSchema>
+    private uvidSource?: Source
+    historicalUvidAccounts: Map<string, string>
+    /* Source dependent dedupe config */
 
     constructor(config: Config) {
         this.config = config
@@ -96,20 +107,28 @@ export class ContextHelper {
         this.errors = []
         this.reviewerIDs = new Map<string, string[]>()
 
+        this.schemaCache = new Map<string, AccountSchema>()
+
+        this.currentMaxLid = 0
+        this.historicalLidAccounts = new Map<string, string>()
+        this.historicalUvidAccounts = new Map<string, string>()
         logger.debug(lm(`Initializing SDK client.`, this.c))
         this.client = new SDKClient(this.config)
 
         this.config!.merging_map ??= []
-        this.config.getScore = (attribute?: string): number => {
-            let score
+        this.config.getScore = (sourceName?: string, attribute?: string): number => {
+            if (!!sourceName) {
+                const sourceDedupeConfig = this.config.sourceDependentDedupeConfig?.find(
+                    (config) => config.source === sourceName
+                )
+                return sourceDedupeConfig?.formThreshold ?? this.config.getScore(undefined, attribute)
+            }
             if (this.config.global_merging_score) {
-                score = this.config.merging_score
-            } else {
-                const attributeConfig = this.config.merging_map.find((x) => x.identity === attribute)
-                score = attributeConfig?.merging_score
+                return this.config.merging_score ?? 0
             }
 
-            return score ? score : 0
+            const attributeConfig = this.config.merging_map.find((x) => x.identity === attribute)
+            return attributeConfig?.merging_score ?? 0
         }
 
         this.baseUrl = new URL(this.config.baseurl.replace('.api.', '.')).origin
@@ -203,6 +222,19 @@ export class ContextHelper {
         return this.sources
     }
 
+    getNextLid(): number {
+        this.currentMaxLid += 1
+        return this.currentMaxLid
+    }
+
+    getLidSource(): Source {
+        return this.lidSource!
+    }
+
+    getUvidSource(): Source {
+        return this.uvidSource!
+    }
+
     async listReviewerIDs(source?: string): Promise<string[]> {
         if (this.initiated !== 'full') {
             this.reviewerIDs = await this.buildReviewersMap()
@@ -253,10 +285,12 @@ export class ContextHelper {
 
     async getIdentityById(id: string): Promise<IdentityDocument | undefined> {
         let identity: IdentityDocument | undefined
-        if (this.initiated === 'full') {
+        if (this.initiated === 'full' && this.identitiesById.has(id)) {
             identity = this.identitiesById.get(id)
         } else {
             identity = await this.client.getIdentityBySearch(id)
+            this.identitiesById.set(id, identity!)
+            this.identities.push(identity!)
         }
 
         return identity
@@ -346,12 +380,10 @@ export class ContextHelper {
     }
 
     setUUID(account: Account) {
-        while (!account.attributes!.uuid) {
+        if (!account.attributes!.uuid) {
             const uuid = uuidv4()
-            if (!this.uuids.has(uuid)) {
-                this.uuids.add(uuid)
-                account.attributes!.uuid = uuid
-            }
+            account.attributes!.uuid = uuid
+            this.uuids.add(uuid)
         }
     }
 
@@ -498,7 +530,7 @@ export class ContextHelper {
         try {
             if (needsRefresh) {
                 logger.debug(lm(`Refreshing ${account.attributes!.uniqueID} account`, c, 1))
-                this.refreshAccountAttributes(account, sourceAccounts, schema)
+                await this.refreshAccountAttributes(account, sourceAccounts, schema)
             }
         } catch (error) {
             logger.error(error as string)
@@ -509,7 +541,7 @@ export class ContextHelper {
         return uniqueAccount
     }
 
-    private refreshAccountAttributes(account: Account, sourceAccounts: Account[], schema: AccountSchema) {
+    private async refreshAccountAttributes(account: Account, sourceAccounts: Account[], schema: AccountSchema) {
         if (sourceAccounts.length > 0) {
             const attributes: { [key: string]: any } = {}
 
@@ -541,7 +573,7 @@ export class ContextHelper {
                             if (value) values.push(value)
                         }
 
-                        if (values.length > 0) {
+                        if (values.length > 0 && account.attributes!['accountStatus'] !== 'I') {
                             values = values.map((x) => attrSplit(x))
 
                             if (['multi', 'concatenate'].includes(attributeMerge)) {
@@ -597,7 +629,52 @@ export class ContextHelper {
             }
 
             account.attributes = attributes
+
+            attributes!.statuses = Array.from(new Set(attributes!.statuses))
+            const firstActiveSourceAccount = sourceAccounts.find(
+                (account) => account.attributes!['accountStatus'] !== 'I'
+            )
+            attributes!['accountStatus'] = !!firstActiveSourceAccount ? 'A' : 'I'
+            attributes!['latestPrimarySource'] =
+                firstActiveSourceAccount?.sourceName ?? attributes!['latestPrimarySource']
+
+            try {
+                account = await retrieveAndUpdateLidForAccount(this, account, this.client, this.config)
+                account = await retrieveAndUpdateUvidForAccount(this, account, this.client, this.config)
+            } catch (error) {
+                // failing to create UVID and LID should not stop the process from generating a unique account
+                logger.error(error as string)
+            }
         }
+    }
+
+    getNewMappedAccountForSourceFromAccount = async (
+        account: Account,
+        source: Source,
+        attributeMap: AccountMergingMap[],
+        accountAttributesToMatch?: { [key: string]: any }
+    ): Promise<Account> => {
+        if (accountAttributesToMatch === undefined) {
+            const formattedMap = this.config.lid_filterAttributesMap.map((map) => ({ ...map, uidOnly: false }))
+            accountAttributesToMatch = buildAccountAttributesObject(account, formattedMap)
+        }
+
+        const schema = await this.buildDynamicSchema([source])
+
+        const schemaAttributesNames = schema.attributes.map((attribute) => attribute.name)
+        const accountAttributes = schemaAttributesNames.reduce(
+            (allAttributes, currentAttributeName) => {
+                const identityAttributeName = attributeMap.find((map) => map.account.includes(currentAttributeName))
+                if (!!identityAttributeName)
+                    allAttributes[currentAttributeName] = accountAttributesToMatch[identityAttributeName.identity]
+                return allAttributes
+            },
+            {} as { [key: string]: any }
+        )
+        const accountToCreate = { ...account }
+        accountToCreate.attributes = { ...account.attributes, ...accountAttributes }
+
+        return accountToCreate
     }
 
     async buildReport(id: string) {
@@ -878,7 +955,7 @@ export class ContextHelper {
                     const similarity = lig3(iValue, cValue)
                     const score = similarity * 100
                     if (!this.config.global_merging_score) {
-                        const threshold = this.config.getScore(attribute)
+                        const threshold = this.config.getScore(account.sourceName, attribute)
                         if (score < threshold) {
                             continue candidates
                         }
@@ -893,7 +970,7 @@ export class ContextHelper {
                         return p + c
                     }, 0) / length
 
-                if (finalScore >= this.config.getScore()) {
+                if (finalScore >= this.config.getScore(account.sourceName)) {
                     const score = new Map<string, string>()
                     score.set('overall', finalScore.toFixed(0))
                     similarMatches.push({ identity: candidate, score })
@@ -951,6 +1028,36 @@ export class ContextHelper {
         return analysis
     }
 
+    mergeUncorrelatedAccountIntoIdentity = async (
+        uncorrelatedAccount: Account,
+        match: IdentityDocument
+    ): Promise<[Account | undefined, string, string | undefined]> => {
+        const c = 'mergeUncorrelatedAccountIntoIdentity'
+        let status
+        let message = ''
+        const uniqueAccount = this.getFusionAccountByIdentity(match)
+        if (uniqueAccount) {
+            uniqueAccount.modified = new Date(0).toISOString()
+            message = datedMessage('Identical match found.', uncorrelatedAccount)
+            status = 'auto'
+            const attributes = uniqueAccount.attributes!
+            attributes.statuses.push(status)
+            attributes.accounts.push(uncorrelatedAccount.id)
+            attributes.history.push(message)
+            deleteArrayItem(attributes.statuses, 'edited')
+        } else {
+            const msg = lm(
+                `Correlating ${uncorrelatedAccount.name} account to non-Fusion identity ${match.displayName}`,
+                c,
+                1
+            )
+            logger.info(msg)
+            await this.correlateAccount(match.id, uncorrelatedAccount.id!)
+        }
+
+        return [uniqueAccount, message, status]
+    }
+
     async processUncorrelatedAccount(uncorrelatedAccount: Account): Promise<UniqueForm | undefined> {
         const c = 'processUncorrelatedAccount'
 
@@ -964,49 +1071,58 @@ export class ContextHelper {
             const { identicalMatch, similarMatches } = await this.analyzeUncorrelatedAccount(uncorrelatedAccount)
 
             if (identicalMatch) {
-                logger.debug(lm(`Identical match found.`, c, 1))
-                const currentAccount = this.getFusionAccountByIdentity(identicalMatch)
-                if (currentAccount) {
-                    uniqueAccount = currentAccount
-                    uniqueAccount = this.accounts.find((x) => x.identityId === identicalMatch.id) as Account
-                    uniqueAccount.modified = new Date(0).toISOString()
-                    message = datedMessage('Identical match found.', uncorrelatedAccount)
-                    status = 'auto'
-                    const attributes = uniqueAccount.attributes!
-                    attributes.statuses.push(status)
-                    attributes.accounts.push(uncorrelatedAccount.id)
-                    attributes.history.push(message)
-                    deleteArrayItem(attributes.statuses, 'edited')
-                } else {
-                    const msg = lm(
-                        `Correlating ${uncorrelatedAccount.name} account to non-Fusion identity ${identicalMatch.displayName}`,
-                        c,
-                        1
-                    )
-                    logger.info(msg)
-                    await this.correlateAccount(identicalMatch.id, uncorrelatedAccount.id!)
-                }
+                ;[uniqueAccount, message, status] = await this.mergeUncorrelatedAccountIntoIdentity(
+                    uncorrelatedAccount,
+                    identicalMatch
+                )
                 // Check if similar match exists
             } else {
                 if (similarMatches.length > 0) {
                     logger.debug(lm(`Similar matches found`, c, 1))
-                    const formName = this.getUniqueFormName(uncorrelatedAccount, this.source!.name)
-                    const formOwner = { id: this.source!.owner.id, type: this.source!.owner.type }
-                    const accountAttributes = buildAccountAttributesObject(
-                        uncorrelatedAccount,
-                        this.config.merging_map,
-                        true
+                    const sourceDedupeConfig = this.config.sourceDependentDedupeConfig?.find(
+                        (config) => config.source === uncorrelatedAccount?.sourceName
                     )
-                    uncorrelatedAccount.attributes = { ...uncorrelatedAccount.attributes, ...accountAttributes }
-                    uncorrelatedAccount = normalizeAccountAttributes(uncorrelatedAccount, this.config.merging_map)
-                    uniqueForm = new UniqueForm(
-                        formName,
-                        formOwner,
-                        uncorrelatedAccount,
-                        similarMatches,
-                        this.config.merging_attributes,
-                        this.config.getScore
-                    )
+                    // filter for matches that has average score above the merge threshold, sort them by score desc
+                    const matchesToMerge = !sourceDedupeConfig
+                        ? []
+                        : similarMatches
+                              .map((match) => {
+                                  const averageMatchingScore =
+                                      Number.parseFloat(
+                                          Array.from(match.score.values()).reduce((sum, cur) => sum + cur)
+                                      ) / Array.from(match.score.values()).length
+                                  return { identity: match.identity, score: averageMatchingScore }
+                              })
+                              .filter((match) => match.score > sourceDedupeConfig.mergeThreshold)
+                              .sort((match1, match2) => match2.score - match1.score)
+                    if (matchesToMerge.length !== 0) {
+                        ;[uniqueAccount, message, status] = await this.mergeUncorrelatedAccountIntoIdentity(
+                            uncorrelatedAccount,
+                            matchesToMerge[0].identity
+                        )
+                    } else {
+                        const matchesToMergeIdentityId = matchesToMerge.map((match) => match.identity.id)
+                        const matchesToCreateForms = similarMatches.filter(
+                            (match) => !matchesToMergeIdentityId.includes(match.identity.id)
+                        )
+                        const formName = this.getUniqueFormName(uncorrelatedAccount, this.source!.name)
+                        const formOwner = { id: this.source!.owner.id, type: this.source!.owner.type }
+                        const accountAttributes = buildAccountAttributesObject(
+                            uncorrelatedAccount,
+                            this.config.merging_map,
+                            true
+                        )
+                        uncorrelatedAccount.attributes = { ...uncorrelatedAccount.attributes, ...accountAttributes }
+                        uncorrelatedAccount = normalizeAccountAttributes(uncorrelatedAccount, this.config.merging_map)
+                        uniqueForm = new UniqueForm(
+                            formName,
+                            formOwner,
+                            uncorrelatedAccount,
+                            matchesToCreateForms,
+                            this.config.merging_attributes,
+                            this.config.getScore
+                        )
+                    }
                 } else {
                     // No matching existing identity found
                     logger.debug(lm(`No matching identity found. Creating new unique account.`, c, 1))
@@ -1042,7 +1158,7 @@ export class ContextHelper {
         if (this.schema) {
             schema = this.schema
         } else {
-            schema = await this.buildDynamicSchema()
+            schema = await this.buildDynamicSchema(this.sources)
             this.loadSchema(schema)
         }
 
@@ -1153,12 +1269,18 @@ export class ContextHelper {
         return account
     }
 
-    private async buildDynamicSchema(): Promise<AccountSchema> {
+    private async buildDynamicSchema(sources: Source[]): Promise<AccountSchema> {
         const c = 'buildDynamicSchema'
         logger.debug(lm('Fetching sources.', c, 1))
         const schemas: Schema[] = []
         logger.debug(lm('Fetching schemas.', c, 1))
-        for (const source of this.sources) {
+
+        const key = sources.map((source) => source.id).join(',')
+        if (this.schemaCache.has(key)) {
+            return this.schemaCache.get(key) as AccountSchema
+        }
+
+        for (const source of sources) {
             const sourceSchemas = await this.client.listSourceSchemas(source.id!)
             schemas.push(sourceSchemas.find((x) => x.name === 'account') as Schema)
         }

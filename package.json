@@ -13,14 +13,14 @@
     },
     "private": true,
     "dependencies": {
-        "@sailpoint/connector-sdk": "1.1.12",
+        "@sailpoint/connector-sdk": "github:sailpoint-oss/sp-connector-sdk-js#main",
         "@tidyjs/tidy": "^2.5.2",
         "axios": "^1.6.8",
         "axios-request-throttle": "^1.0.0",
         "axios-retry": "^4.5.0",
         "fast-levenshtein": "3.0.0",
         "markdown-it": "^14.0.0",
-        "sailpoint-api-client": "1.4.8",
+        "sailpoint-api-client": "github:anitarodia/sailpoint-api-client#main",
         "transliteration": "^2.3.5",
         "uuid": "^9.0.1",
         "velocityjs": "^2.0.6"
@@ -36,7 +36,7 @@
         "globals": "^15.9.0",
         "prettier": "^3.2.5",
         "shx": "^0.3.4",
-        "typescript": "^5.3.3",
+        "typescript": "^5.5.4",
         "typescript-eslint": "^8.2.0"
     },
     "prettier": {

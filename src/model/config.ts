@@ -49,5 +49,56 @@ export interface Config {
     version: number
     reset: boolean
     forceAggregation: boolean
-    getScore: (attribute?: string) => number
+    getScore: (sourceName?: string, attribute?: string) => number
+    /* LID configs */
+    lid_field: string
+    lid_start: number
+    lid_maxLength: number
+    lid_source: string
+    lid_searchField: string
+    lid_filterAttributesMap: MergingMapBase[]
+    lid_mergingMap: MergingMapBase[]
+    lid_matchingScoreThreshold: number
+    /* UVID configs */
+    uvid_field: string
+    uvid_source: string
+    uvid_mergingMap: MergingMapBase[]
+    uvid_case: 'same' | 'lower' | 'upper'
+    uvid_minCounterDigits: number
+    uvid_maxLength?: number
+    uvid_normalize: boolean
+    uvid_spaces: boolean
+    uvid_template: string
+    /* Source dependent dedup config */
+    sourceDependentDedupeConfig?: SourceDependentDedupeConfig[]
+}
+
+export interface SourceDependentDedupeConfig {
+    source: string
+    mergeThreshold: number
+    formThreshold: number
+}
+
+export interface MergingMapBase {
+    account: string[]
+    identity: string
+}
+
+export interface AccountMergingMap extends MergingMapBase {
+    uidOnly: boolean
+}
+
+export interface MergingMap extends AccountMergingMap {
+    attributeMerge?: 'multi' | 'concatenate' | 'first' | 'source'
+    source: string | undefined
+    merging_score?: number
+}
+
+export interface UIDConfig {
+    case: 'same' | 'lower' | 'upper'
+    minCounterDigits: number
+    maxLength?: number
+    normalize: boolean
+    spaces: boolean
+    template: string
 }
