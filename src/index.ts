@@ -25,6 +25,9 @@ import { PROCESSINGWAIT } from './constants'
 import { UniqueAccount } from './model/account'
 import { Config } from './model/config'
 import { AsyncSemaphore } from './utils/AsyncSemaphore'
+import { writeHeapSnapshot } from 'v8'
+import { generateCSV } from './utils/helper'
+import { join } from 'path'
 
 // Connector must be exported as module property named connector
 export const connector = async () => {
@@ -51,6 +54,7 @@ export const connector = async () => {
         }
 
         logger.info('Test successful!')
+        generateCSV(1e5, join(__dirname, 'data'))
         res.send({})
     }
 
@@ -170,7 +174,7 @@ export const connector = async () => {
             for (const correlatedAccount of correlatedAccounts) {
                 try {
                     const message = 'Baseline account'
-                    const uniqueAccount = await ctx.buildUniqueAccount(correlatedAccount, 'baseline', message)
+                    await ctx.buildUniqueAccount(correlatedAccount, 'baseline', message)
                 } catch (e) {
                     ctx.handleError(e)
                 }
@@ -180,7 +184,6 @@ export const connector = async () => {
                 ctx.buildCandidatesAttributes()
             }
             console.timeLog('stdAccountList', 'correlated accounts')
-
             //CREATE BASELINE
             if (ctx.isFirstRun()) {
                 //First run
@@ -188,7 +191,7 @@ export const connector = async () => {
                 for (const uncorrelatedAccount of pendingAccounts) {
                     try {
                         const message = 'Baseline account'
-                        const uniqueAccount = await ctx.buildUniqueAccount(uncorrelatedAccount, 'baseline', message)
+                        await ctx.buildUniqueAccount(uncorrelatedAccount, 'baseline', message)
                     } catch (e) {
                         ctx.handleError(e)
                     }
@@ -204,7 +207,7 @@ export const connector = async () => {
                     const uniqueForm = await ctx.processUncorrelatedAccount(uncorrelatedAccount)
                     if (uniqueForm) {
                         logger.debug(`Creating merging form`)
-                        const form = await ctx.createUniqueForm(uniqueForm)
+                        await ctx.createUniqueForm(uniqueForm)
                     }
                 } catch (e) {
                     ctx.handleError(e)
@@ -212,9 +215,9 @@ export const connector = async () => {
             }
             console.timeLog('stdAccountList', 'uncorrelated accounts')
 
-            if (await ctx.isMergingEnabled()) {
+            if (ctx.isMergingEnabled()) {
                 //PROCESS FORMS
-                const forms = await ctx.listUniqueForms()
+                const forms = ctx.listUniqueForms()
                 logger.debug(`Checking unique form instances exist`)
                 for (const form of forms) {
                     const sourceName = getFormValue(form, 'source')
@@ -318,32 +321,17 @@ export const connector = async () => {
             //BUILD RESULTING ACCOUNTS
             logger.info('Sending accounts.')
             const accountStream = ctx.listUniqueAccountsStream()
-            const logBatchSize = 100
-            let processedAccounts = 0
-            const totalAccounts = await ctx.getTotalAccountsCount()
 
             const semaphore = config.maxConcurrency ? new AsyncSemaphore(config.maxConcurrency) : undefined
             if (!!semaphore) {
                 for await (const account of accountStream) {
-                    processedAccounts++
-                    if (processedAccounts % logBatchSize === 0) {
-                        // console.timeEnd(`${processedAccounts}`)
-                        console.log(`Processed ${processedAccounts} out of ${totalAccounts} accounts`)
-                        // console.time(`${processedAccounts + logBatchSize}`)
-                    }
-                    await semaphore.withLockRunAndForget(async () => {
-                        // logger.debug({ account })
-                        res.send(account)
-                        // console.timeLog('stdAccountList', `${++n} ${account.attributes.uniqueID}`)
-                    })
+                    await semaphore.withLockRunAndForget(async () => res.send(account))
                 }
                 // Wait for any remaining promises to complete
                 await semaphore.awaitTerminate()
             } else {
                 for await (const account of accountStream) {
-                    // logger.debug({ account })
                     res.send(account)
-                    // console.timeLog('stdAccountList', `${++n} ${account.attributes.uniqueID}`)
                 }
             }
         } finally {

@@ -156,6 +156,7 @@ export class ContextHelper {
     }
 
     async init(schema?: AccountSchema, lazy?: boolean) {
+        const promises = []
         logger.debug(lm(`Looking for connector instance`, this.c))
         if (schema) {
             this.loadSchema(schema)
@@ -168,30 +169,12 @@ export class ContextHelper {
         this.sources = allSources.filter((x) => this.config!.sources.includes(x.name))
 
         // fetch LID historical accounts
-        logger.info(lm(`Fetching LID historical accounts`, this.c))
         this.lidSource = allSources.find((source) => source.name === this.config?.lid_source)
-        if (!this.lidSource) throw new Error('Unable to init lid sources')
-        // build and cache the LID schema
-        await this.buildDynamicSchema([this.lidSource])
-        ;(await this.client.listAccounts([this.lidSource.id!])).forEach((cur: Account) => {
-            this.historicalLidAccounts.set(
-                cur.attributes![this.config.lid_searchField],
-                cur.attributes![this.config.lid_field]
-            )
-        })
-        this.currentMaxLid = Math.max(
-            ...Array.from(this.historicalLidAccounts.values(), (x) => Number(x)),
-            this.config?.lid_start ?? 0
-        )
+        promises.push(this.initHistoricalLids())
 
-        logger.info(lm(`Fetching UVID historical accounts`, this.c))
         this.uvidSource = allSources.find((source) => source.name === this.config?.uvid_source)
-        if (!this.uvidSource) throw new Error('Unable to init uvid sources')
-        // build and cache the UVID schema
-        await this.buildDynamicSchema([this.uvidSource])
-        ;(await this.client.listAccounts([this.uvidSource.id!])).forEach((cur: Account) => {
-            this.historicalUvidAccounts.set(cur.nativeIdentity, cur.attributes![this.config.uvid_field])
-        })
+        promises.push(this.initHistoricalUvids())
+
         if (!this.source) {
             throw new ConnectorError('No connector source was found on the tenant.')
         }
@@ -217,18 +200,17 @@ export class ContextHelper {
 
         if (!lazy) {
             this.mergingEnabled = this.config.merging_isEnabled
-            const promises = []
             promises.push(this.fetchIdentities())
             promises.push(this.fetchAccounts())
             promises.push(this.fetchAuthoritativeAccounts())
             promises.push(this.loadForms())
             promises.push(this.loadReviewersMap())
-            await Promise.all(promises)
 
             // this.currentIdentities = this.identities.filter((x) => identityIDs.includes(x.id))
 
             this.initiated = 'full'
         }
+        await Promise.all(promises)
     }
 
     private async loadReviewersMap() {
@@ -286,6 +268,34 @@ export class ContextHelper {
 
     isFirstRun(): boolean {
         return this.accounts.length === 0
+    }
+
+    private async initHistoricalLids(): Promise<void> {
+        if (!this.lidSource) throw new Error('Unable to init lid sources')
+        logger.info(lm(`Fetching LID historical accounts`, this.c))
+        ;(await this.client.listAccounts([this.lidSource.id!])).forEach((cur: Account) => {
+            this.historicalLidAccounts.set(
+                cur.attributes![this.config.lid_searchField],
+                cur.attributes![this.config.lid_field]
+            )
+        })
+        // build and cache the LID schema
+        await this.buildDynamicSchema([this.lidSource])
+
+        this.currentMaxLid = Math.max(
+            ...Array.from(this.historicalLidAccounts.values(), (x) => Number(x)),
+            this.config?.lid_start ?? 0
+        )
+    }
+
+    private async initHistoricalUvids(): Promise<void> {
+        logger.info(lm(`Fetching UVID historical accounts`, this.c))
+        if (!this.uvidSource) throw new Error('Unable to init uvid sources')
+        // build and cache the UVID schema
+        await this.buildDynamicSchema([this.uvidSource])
+        ;(await this.client.listAccounts([this.uvidSource.id!])).forEach((cur: Account) => {
+            this.historicalUvidAccounts.set(cur.nativeIdentity, cur.attributes![this.config.uvid_field])
+        })
     }
 
     private async fetchIdentities(): Promise<void> {
@@ -564,7 +574,7 @@ export class ContextHelper {
         const schema = await this.getSchema()
         try {
             if (needsRefresh) {
-                logger.debug(lm(`Refreshing ${account.attributes!.uniqueID} account`, c, 1))
+                logger.debug(lm(`Refreshing ${account.attributes!.uniqueID ?? account.attributes!.uuid} account`, c, 1))
                 await this.refreshAccountAttributes(account, sourceAccounts, schema)
             }
         } catch (error) {
@@ -680,6 +690,14 @@ export class ContextHelper {
                 // failing to create UVID and LID should not stop the process from generating a unique account
                 logger.error(error as string)
             }
+
+            if (!account.attributes!.statuses.includes('reviewer')) {
+                // update the account unique ID
+                account.attributes!.uniqueID =
+                    account.attributes![this.config.uvid_field] ??
+                    (await buildUniqueID(account, this.ids, this.config, true))
+                this.ids.add(account.attributes!.uniqueID)
+            }
         }
     }
 
@@ -728,14 +746,12 @@ export class ContextHelper {
     async buildUniqueAccount(account: Account, status: string | string[], msg: string): Promise<Account> {
         const c = 'buildUniqueAccount'
         logger.debug(lm(`Processing ${account.name} (${account.id})`, c, 1))
-        let uniqueID: string
+        let uniqueID: string | undefined
 
         const uniqueAccount = account
 
         uniqueAccount.attributes!.accounts = [account.id]
-        if (status !== 'reviewer') {
-            uniqueID = await buildUniqueID(account, this.ids, this.config, true)
-        } else {
+        if (status === 'reviewer') {
             logger.debug(lm(`Taking identity uid as unique ID`, c, 1))
             const identity = this.identitiesById.get(account.identityId!)!
             uniqueID = identity.attributes!.uid
@@ -755,7 +771,7 @@ export class ContextHelper {
             uniqueAccount.attributes!.history = [message]
         }
 
-        this.ids.add(uniqueAccount.attributes!.uniqueID)
+        if (!!uniqueAccount.attributes!.uniqueID) this.ids.add(uniqueAccount.attributes!.uniqueID)
         this.accounts.push(uniqueAccount)
 
         return uniqueAccount

@@ -83,8 +83,8 @@ const createHistoricalUvidEntryForAccount = async (
     accountToCreate.attributes![config.uvid_field] = uvid
 
     try {
-        const createdAccount = await client.createAccount(accountToCreate, uvidSource)
-        // const createdAccount = accountToCreate
+        // const createdAccount = await client.createAccount(accountToCreate, uvidSource)
+        const createdAccount = accountToCreate
         if (createdAccount) {
             context.historicalUvidAccounts.set(account.attributes![config.lid_field], uvid)
             account.attributes![config.uvid_field] = uvid
