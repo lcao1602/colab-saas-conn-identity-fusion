@@ -92,8 +92,8 @@ const createHistoricalLidEntryForAccount = async (
     accountToCreate.attributes![config.lid_searchField] = futureLookupValue
 
     try {
-        // const createdAccount = await client.createAccount(accountToCreate, lidSource)
-        const createdAccount = accountToCreate
+        const createdAccount = await client.createAccount(accountToCreate, lidSource)
+        // const createdAccount = accountToCreate
         if (createdAccount) {
             context.historicalLidAccounts.set(futureLookupValue, newLidForAccount)
             account.attributes![config.lid_field] = newLidForAccount

@@ -249,12 +249,15 @@ export class SDKClient {
         return response.data
     }
 
-    async listAccounts(sourceIds?: string[]): Promise<Account[]> {
+    async listAccounts(sourceIds?: string[], filter?: string): Promise<Account[]> {
         const api = new AccountsApi(this.config)
         let filters: string | undefined
         if (sourceIds) {
             const sourceValues = sourceIds.map((x) => `"${x}"`).join(', ')
             filters = `sourceId in (${sourceValues})`
+        }
+        if (filter) {
+            filters += ` and ${filter}`
         }
         const search = async (requestParameters?: AccountsApiListAccountsRequest | undefined) => {
             return await api.listAccounts({ ...requestParameters, filters })
@@ -263,6 +266,36 @@ export class SDKClient {
         const response = await Paginator.paginate(api, search)
 
         return response.data
+    }
+
+    async listAccountsPage(
+        sourceIds?: string[],
+        filter?: string,
+        sorter?: string,
+        offset?: number,
+        limit?: number
+    ): Promise<Account[]> {
+        const api = new AccountsApi(this.config)
+        let filters: string | undefined
+        if (sourceIds) {
+            const sourceValues = sourceIds.map((x) => `"${x}"`).join(', ')
+            filters = `sourceId in (${sourceValues})`
+        }
+        if (filter) {
+            filters += `and ${filter}`
+        }
+        const requestParameters: AccountsApiListAccountsRequest = {
+            offset: offset ?? 0,
+            limit: limit ?? 250,
+            filters: filters,
+            sorters: sorter,
+        }
+        try {
+            const response = await api.listAccounts(requestParameters)
+            return response.data
+        } catch (e) {
+            return []
+        }
     }
 
     async getAccount(id: string): Promise<Account | undefined> {

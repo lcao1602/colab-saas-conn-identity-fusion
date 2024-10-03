@@ -39,7 +39,7 @@ import {
 } from './utils'
 import { EDITFORMNAME, NONAGGREGABLE_TYPES, UNIQUEFORMNAME, WORKFLOW_NAME, reservedAttributes } from './constants'
 import { EditForm, UniqueForm } from './model/form'
-import { buildUniqueID } from './utils/unique'
+import { _buildUniqueID, buildUniqueID } from './utils/unique'
 import { ReviewEmail, ErrorEmail, ReportEmail } from './model/email'
 import { AccountAnalysis, SimilarAccountMatch, UniqueAccount } from './model/account'
 import { AxiosError } from 'axios'
@@ -165,23 +165,20 @@ export class ContextHelper {
         }
         const id = this.config!.spConnectorInstanceId as string
         const allSources = await this.client.listSources()
-        this.source = allSources.find((x) => (x.connectorAttributes as any).spConnectorInstanceId === id)
-        this.sources = allSources.filter((x) => this.config!.sources.includes(x.name))
 
-        // fetch LID historical accounts
+        this.source = allSources.find((x) => (x.connectorAttributes as any).spConnectorInstanceId === id)
+        if (!this.source) throw new ConnectorError('No connector source was found on the tenant.')
+
+        this.sources = allSources.filter((x) => this.config!.sources.includes(x.name))
+        if (this.sources.length < this.config.sources.length) {
+            throw new ConnectorError('Unable to find all sources. Please check your configuration')
+        }
+
         this.lidSource = allSources.find((source) => source.name === this.config?.lid_source)
-        promises.push(this.initHistoricalLids())
+        if (!this.lidSource) throw new ConnectorError('Unable to init lid sources')
 
         this.uvidSource = allSources.find((source) => source.name === this.config?.uvid_source)
-        promises.push(this.initHistoricalUvids())
-
-        if (!this.source) {
-            throw new ConnectorError('No connector source was found on the tenant.')
-        }
-
-        if (!this.source) {
-            throw new ConnectorError('No connector source was found on the tenant.')
-        }
+        if (!this.uvidSource) throw new ConnectorError('Unable to init uvid sources')
 
         const owner = getOwnerFromSource(this.source)
         const wfName = `${WORKFLOW_NAME} (${this.config!.cloudDisplayName})`
@@ -205,6 +202,8 @@ export class ContextHelper {
             promises.push(this.fetchAuthoritativeAccounts())
             promises.push(this.loadForms())
             promises.push(this.loadReviewersMap())
+            promises.push(this.initHistoricalUvids())
+            promises.push(this.initHistoricalLids())
 
             // this.currentIdentities = this.identities.filter((x) => identityIDs.includes(x.id))
 
@@ -270,30 +269,51 @@ export class ContextHelper {
         return this.accounts.length === 0
     }
 
-    private async initHistoricalLids(): Promise<void> {
-        if (!this.lidSource) throw new Error('Unable to init lid sources')
+    private async initHistoricalLids(account?: Account): Promise<void> {
         logger.info(lm(`Fetching LID historical accounts`, this.c))
-        ;(await this.client.listAccounts([this.lidSource.id!])).forEach((cur: Account) => {
+        // build and cache the LID schema
+        await this.buildDynamicSchema([this.lidSource!])
+        // if the account is provided, fetch the LID for that account
+        const filter = account ? `name eq ${account.attributes![this.config.lid_searchField]}` : undefined
+        ;(await this.client.listAccounts([this.lidSource!.id!], filter)).forEach((cur: Account) => {
             this.historicalLidAccounts.set(
                 cur.attributes![this.config.lid_searchField],
                 cur.attributes![this.config.lid_field]
             )
         })
-        // build and cache the LID schema
-        await this.buildDynamicSchema([this.lidSource])
-
-        this.currentMaxLid = Math.max(
-            ...Array.from(this.historicalLidAccounts.values(), (x) => Number(x)),
-            this.config?.lid_start ?? 0
-        )
+        if (account) {
+            // if an account is provided, set the current max LID to the highest LID found in the historical accounts
+            const lidHistoricalAccounts = await this.client.listAccountsPage(
+                [this.lidSource!.id!],
+                undefined,
+                '-nativeIdentity',
+                0,
+                1
+            )
+            this.currentMaxLid = Math.max(
+                ...lidHistoricalAccounts.map((account) => Number(account.attributes![this.config!.lid_field])),
+                this.config?.lid_start ?? 0
+            )
+        } else {
+            this.currentMaxLid = Math.max(
+                ...Array.from(this.historicalLidAccounts.values(), (x) => Number(x)),
+                this.config?.lid_start ?? 0
+            )
+        }
     }
 
-    private async initHistoricalUvids(): Promise<void> {
+    private async initHistoricalUvids(account?: Account): Promise<void> {
         logger.info(lm(`Fetching UVID historical accounts`, this.c))
-        if (!this.uvidSource) throw new Error('Unable to init uvid sources')
         // build and cache the UVID schema
-        await this.buildDynamicSchema([this.uvidSource])
-        ;(await this.client.listAccounts([this.uvidSource.id!])).forEach((cur: Account) => {
+        await this.buildDynamicSchema([this.uvidSource!])
+        // if the account is provided, fetch the UVID for that account and any relevant uvids
+        let filter = undefined
+        if (account) {
+            const uvid = account.attributes![this.config.uvid_field]
+            const baseUvid = uvid.replace(/\d+$/, '')
+            if (baseUvid) filter = `name sw "${baseUvid}"`
+        }
+        ;(await this.client.listAccounts([this.uvidSource!.id!], filter)).forEach((cur: Account) => {
             this.historicalUvidAccounts.set(cur.nativeIdentity, cur.attributes![this.config.uvid_field])
         })
     }
@@ -788,6 +808,8 @@ export class ContextHelper {
 
         logger.debug(lm(`Fetching original account`, c, 1))
         const account = await this.getFusionAccount(id)
+        await this.initHistoricalLids(account)
+        await this.initHistoricalUvids(account)
 
         if (account) {
             account.attributes!.accounts ??= []

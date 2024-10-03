@@ -42,19 +42,8 @@ export const connector = async () => {
         const ctx = new ContextHelper(config)
         await ctx.init(undefined, true)
 
-        const source = ctx.getSource()
-        const sources = ctx.listSources()
-
-        if (!source) {
-            throw new ConnectorError('Unable to connect to IdentityNow! Please check your configuration')
-        }
-
-        if (sources.length < config.sources.length) {
-            throw new ConnectorError('Unable to find all sources. Please check your configuration')
-        }
-
         logger.info('Test successful!')
-        generateCSV(1e5, join(__dirname, 'data'))
+
         res.send({})
     }
 
