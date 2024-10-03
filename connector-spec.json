@@ -173,6 +173,235 @@
                 },
                 {
                     "type": "section",
+                    "sectionTitle": "LIDs configuration",
+                    "sectionHelpMessage": "Configuration details for how Loyola Unique Identifier (LID) are generated",
+                    "items": [
+                        {
+                            "key": "lid_field",
+                            "label": "Login ID field",
+                            "type": "text",
+                            "helpText": "The field to store the login id",
+                            "required": true
+                        },
+                        {
+                            "key": "lid_start",
+                            "label": "The LID starting number",
+                            "type": "number",
+                            "helpText": "Generated LIDs will never be lower than this number",
+                            "required": true
+                        },
+                        {
+                            "key": "lid_maxLength",
+                            "label": "The LID maximum string length",
+                            "type": "number",
+                            "helpText": "Generated LIDs will never have length greater than this number. Any LID with smaller lengths will be prepended with 0s to match the length",
+                            "required": true
+                        },
+                        {
+                            "key": "lid_source",
+                            "label": "The LID source",
+                            "type": "text",
+                            "helpText": "Sources to look up any historical LID for an account, and also to store the newly generated LIDs",
+                            "required": true
+                        },
+                        {
+                            "key": "lid_filterAttributesMap",
+                            "label": "Attributes to search for the accounts in historical LID sources",
+                            "helpText": "Specify the account attributes that should be consolidated to be used as the account name for the historical LID record.",
+                            "titleKey": "identity",
+                            "subtitleKey": "account",
+                            "dragNDropEnabled": true,
+                            "deleteButton": true,
+                            "editButton": true,
+                            "addButton": true,
+                            "copyButton": true,
+                            "buttonLabel": "Add filter attribute mapping",
+                            "type": "cardList",
+                            "subMenus": [
+                                {
+                                    "label": "Attribute map configuration",
+                                    "items": [
+                                        {
+                                            "key": "identity",
+                                            "label": "Identity attribute",
+                                            "type": "text",
+                                            "required": true,
+                                            "helpKey": "Technical name of the identity attribute to compare with"
+                                        },
+                                        {
+                                            "key": "account",
+                                            "label": "Account attributes",
+                                            "type": "list",
+                                            "helpKey": "List of account attributes to compare with"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "key": "lid_searchField",
+                            "label": "The LID search field",
+                            "type": "text",
+                            "helpText": "The field in which the consolidated search key is stored. This should be the account 'name' field. This will be used for looking up historical LID accounts",
+                            "required": true
+                        },
+                        {
+                            "key": "lid_matchingScoreThreshold",
+                            "label": "The minimum score which records will be considered matching",
+                            "helpText": "Minimum similarity score [0-100] (LIG3 similarity function * 100 from Levenshtein distance)",
+                            "type": "number",
+                            "required": false
+                        }
+                    ]
+                },
+                {
+                    "type": "section",
+                    "sectionTitle": "Unique University ID configuration",
+                    "sectionHelpMessage": "Configure how your identity IDs are generated",
+                    "items": [
+                        {
+                            "key": "uvid_field",
+                            "label": "Unique University ID field",
+                            "type": "text",
+                            "helpText": "The field that the UVID will be stored",
+                            "required": true
+                        },
+                        {
+                            "key": "uvid_source",
+                            "label": "Unique University ID Historical source",
+                            "type": "text",
+                            "helpText": "The historical source that the UVID will be stored/reference for account aggregation",
+                            "required": true
+                        },
+                        {
+                            "key": "uvid_mergingMap",
+                            "label": "Identity to account attribute mapping",
+                            "helpText": "Accounts will be consolidated to the specified identity attribute to be compared against each other with LIG3",
+                            "titleKey": "identity",
+                            "subtitleKey": "account",
+                            "dragNDropEnabled": true,
+                            "deleteButton": true,
+                            "editButton": true,
+                            "addButton": true,
+                            "copyButton": true,
+                            "buttonLabel": "Add merge attribute mapping",
+                            "type": "cardList",
+                            "subMenus": [
+                                {
+                                    "label": "Attribute map configuration",
+                                    "items": [
+                                        {
+                                            "key": "identity",
+                                            "label": "Identity attribute",
+                                            "type": "text",
+                                            "required": true,
+                                            "helpKey": "The consolidated attribute name"
+                                        },
+                                        {
+                                            "key": "account",
+                                            "label": "Account attributes",
+                                            "type": "list",
+                                            "required": true,
+                                            "helpKey": "List of account attributes to map"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "key": "uvid_template",
+                            "label": "Apache Velocity template",
+                            "type": "text",
+                            "required": true
+                        },
+                        {
+                            "key": "uvid_normalize",
+                            "label": "Normalize special characters?",
+                            "type": "checkbox"
+                        },
+                        {
+                            "key": "uvid_spaces",
+                            "label": "Remove spaces?",
+                            "type": "checkbox"
+                        },
+                        {
+                            "key": "uvid_minCounterDigits",
+                            "label": "Minimum counter digits",
+                            "helpText": "Any counter that has less digits will be padded with 0s",
+                            "type": "number",
+                            "required": true
+                        },
+                        {
+                            "key": "uvid_maxLength",
+                            "label": "Unique University ID maximum length",
+                            "helpText": "If the generated UVID is longer than this, the text part will be truncated to fit the configured length",
+                            "type": "number"
+                        },
+                        {
+                            "key": "uvid_case",
+                            "label": "Case selection",
+                            "type": "radio",
+                            "required": true,
+                            "options": [
+                                {
+                                    "label": "Do not change",
+                                    "value": "same"
+                                },
+                                {
+                                    "label": "Lower case",
+                                    "value": "lower"
+                                },
+                                {
+                                    "label": "Upper case",
+                                    "value": "upper"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "key": "sourceDependentDedupeConfig",
+                    "label": "Individual source deduplication configuration",
+                    "titleKey": "source",
+                    "subtitleKey": "reviewer",
+                    "dragNDropEnabled": true,
+                    "deleteButton": true,
+                    "editButton": true,
+                    "addButton": true,
+                    "copyButton": true,
+                    "buttonLabel": "Add source deduplication config",
+                    "type": "cardList",
+                    "subMenus": [
+                        {
+                            "label": "Source Deduplication Configuration",
+                            "items": [
+                                {
+                                    "key": "source",
+                                    "label": "Source",
+                                    "type": "text",
+                                    "required": true,
+                                    "helpKey": "The source of interest"
+                                },
+                                {
+                                    "key": "mergeThreshold",
+                                    "label": "Minimum similarity score for merging.",
+                                    "type": "number",
+                                    "required": true,
+                                    "helpKey": "The minimum similarity score which the accounts are configured the same."
+                                },
+                                {
+                                    "key": "formThreshold",
+                                    "label": "Minimum similarity score for creating a form.",
+                                    "type": "number",
+                                    "required": true,
+                                    "helpKey": "The minimum similarity score which the accounts require a merging form. Anything lower the system will determine that the accounts are separate."
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "section",
                     "sectionTitle": "Merging/mapping configuration",
                     "sectionHelpMessage": "Add your account merging and attribute mapping configuration details here",
                     "items": [

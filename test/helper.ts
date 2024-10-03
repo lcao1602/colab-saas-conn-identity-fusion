@@ -3,9 +3,9 @@ import { join } from 'path'
 import { names, uniqueNamesGenerator } from 'unique-names-generator'
 
 export function generateCSV(numRows: number, folderPath: string): void {
-    const accountRows = []
-    const lidRows = []
-    const uvidRows = []
+    const accountRows: any[] = []
+    const lidRows: any[] = []
+    const uvidRows: any[] = []
     const uvids = new Set<string>()
 
     for (let i = 1; i <= numRows; i++) {

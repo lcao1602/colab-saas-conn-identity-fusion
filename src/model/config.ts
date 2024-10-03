@@ -57,7 +57,6 @@ export interface Config {
     lid_source: string
     lid_searchField: string
     lid_filterAttributesMap: MergingMapBase[]
-    lid_mergingMap: MergingMapBase[]
     lid_matchingScoreThreshold: number
     /* UVID configs */
     uvid_field: string
