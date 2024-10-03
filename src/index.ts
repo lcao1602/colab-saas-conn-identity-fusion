@@ -25,9 +25,6 @@ import { PROCESSINGWAIT } from './constants'
 import { UniqueAccount } from './model/account'
 import { Config } from './model/config'
 import { AsyncSemaphore } from './utils/AsyncSemaphore'
-import { writeHeapSnapshot } from 'v8'
-import { generateCSV } from './utils/helper'
-import { join } from 'path'
 
 // Connector must be exported as module property named connector
 export const connector = async () => {

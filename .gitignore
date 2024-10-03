@@ -28,3 +28,6 @@ config.json
 # Sentry Config File
 .sentryclirc
 .httpyac.json
+
+# test files
+test/**/*.csv
