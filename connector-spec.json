@@ -360,47 +360,6 @@
                     ]
                 },
                 {
-                    "key": "sourceDependentDedupeConfig",
-                    "label": "Individual source deduplication configuration",
-                    "titleKey": "source",
-                    "subtitleKey": "reviewer",
-                    "dragNDropEnabled": true,
-                    "deleteButton": true,
-                    "editButton": true,
-                    "addButton": true,
-                    "copyButton": true,
-                    "buttonLabel": "Add source deduplication config",
-                    "type": "cardList",
-                    "subMenus": [
-                        {
-                            "label": "Source Deduplication Configuration",
-                            "items": [
-                                {
-                                    "key": "source",
-                                    "label": "Source",
-                                    "type": "text",
-                                    "required": true,
-                                    "helpKey": "The source of interest"
-                                },
-                                {
-                                    "key": "mergeThreshold",
-                                    "label": "Minimum similarity score for merging.",
-                                    "type": "number",
-                                    "required": true,
-                                    "helpKey": "The minimum similarity score which the accounts are configured the same."
-                                },
-                                {
-                                    "key": "formThreshold",
-                                    "label": "Minimum similarity score for creating a form.",
-                                    "type": "number",
-                                    "required": true,
-                                    "helpKey": "The minimum similarity score which the accounts require a merging form. Anything lower the system will determine that the accounts are separate."
-                                }
-                            ]
-                        }
-                    ]
-                },
-                {
                     "type": "section",
                     "sectionTitle": "Merging/mapping configuration",
                     "sectionHelpMessage": "Add your account merging and attribute mapping configuration details here",
@@ -523,6 +482,47 @@
                                             "label": "Minimum similarity score [0-100] (LIG3 similarity function * 100 from Levenshtein distance)",
                                             "type": "number",
                                             "required": false
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "key": "sourceDependentDedupeConfig",
+                            "label": "Individual source deduplication configuration",
+                            "titleKey": "source",
+                            "subtitleKey": "reviewer",
+                            "dragNDropEnabled": true,
+                            "deleteButton": true,
+                            "editButton": true,
+                            "addButton": true,
+                            "copyButton": true,
+                            "buttonLabel": "Add source deduplication config",
+                            "type": "cardList",
+                            "subMenus": [
+                                {
+                                    "label": "Source Deduplication Configuration",
+                                    "items": [
+                                        {
+                                            "key": "source",
+                                            "label": "Source",
+                                            "type": "text",
+                                            "required": true,
+                                            "helpKey": "The source of interest"
+                                        },
+                                        {
+                                            "key": "mergeThreshold",
+                                            "label": "Minimum similarity score for merging.",
+                                            "type": "number",
+                                            "required": true,
+                                            "helpKey": "The minimum similarity score which the accounts are configured the same."
+                                        },
+                                        {
+                                            "key": "formThreshold",
+                                            "label": "Minimum similarity score for creating a form.",
+                                            "type": "number",
+                                            "required": true,
+                                            "helpKey": "The minimum similarity score which the accounts require a merging form. Anything lower the system will determine that the accounts are separate."
                                         }
                                     ]
                                 }
